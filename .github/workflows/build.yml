@@ -42,7 +42,7 @@ jobs:
 
         # Quoting 'EOF' prevents GitHub Actions from preemptively expanding Bash variables
         sudo -u builder env WORKSPACE_DIR="$WORKSPACE_DIR" bash << 'EOF'
-        PACKAGES=("google-chrome" "vivaldi")
+        PACKAGES=("google-chrome" "anydesk-bin" "visual-studio-code-bin" "yay-bin" "python312")
         
         for pkg in "${PACKAGES[@]}"; do
           echo "========================================="
