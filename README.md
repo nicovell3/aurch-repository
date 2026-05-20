@@ -20,3 +20,5 @@ Current list of included packages:
 - python312
 
 If you want a different set of packages, just setup your own repository. It's free.
+
+You can check the packages you have installed from AUR with `pacman -Qm`.
