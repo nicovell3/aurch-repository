@@ -3,7 +3,7 @@ name: Build AUR Packages
 on:
   schedule:
     - cron: '0 4 * * *' # Runs every day at 4:00 AM UTC
-  workflow_dispatch:   # Allows you to click a button in GitHub UI to build manually
+  workflow_dispatch:   # Allows manual trigger via GitHub UI
 
 permissions:
   contents: write
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
-      options: --privileged # Required for certain chroot/pacman operations
+      options: --privileged # Required for certain pacman operations
 
     steps:
     - name: Checkout repository
@@ -21,43 +21,42 @@ jobs:
 
     - name: Initialize Arch Linux build environment
       run: |
-        # Update package database and install base development tools + git
         pacman -Syu --noconfirm --needed base-devel git
-        
-        # Create a non-root user called 'builder' with passwordless sudo
-        # (Arch Linux's makepkg strictly forbids running as root)
         useradd -m builder
         echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-        
-        # Set ownership of the current workspace so the builder can write to it
         chown -R builder:builder ./
 
     - name: Build Packages
       shell: bash
+      env:
+        WORKSPACE_DIR: ${{ github.workspace }}
       run: |
-        # Define the AUR packages you want to track and build
-        PACKAGES=("google-chrome" "vivaldi" "visual-studio-code-bin" "python312")
-        
-        # Move to a temporary location outside the main repo to handle the raw source compilation
         mkdir -p /tmp/builds
         chown -R builder:builder /tmp/builds
         cd /tmp/builds
 
-        # Execute as the non-root builder user
-        sudo -u builder bash <<EOF
+        # Quoting 'EOF' prevents GitHub Actions from preemptively expanding Bash variables
+        sudo -u builder env WORKSPACE_DIR="$WORKSPACE_DIR" bash << 'EOF'
+        PACKAGES=("google-chrome" "vivaldi" "visual-studio-code-bin" "python312")
+        
         for pkg in "${PACKAGES[@]}"; do
           echo "========================================="
-          echo "Building package: \$pkg"
+          echo "Building package: $pkg"
           echo "========================================="
           
-          git clone https://aur.archlinux.org/$pkg.git
-          cd \$pkg
+          git clone "https://aur.archlinux.org/$pkg.git"
+          cd "$pkg"
           
-          # Sync dependencies, compile/repack, and skip PGK checks if necessary
+          # Sync dependencies, compile, and build package
           makepkg -s --noconfirm --needed
           
-          # Copy the compiled package file back to our repository root folder
-          cp *.pkg.tar.zst $GITHUB_WORKSPACE/
+          # Safely check if the built package file exists before copying
+          if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+            cp *.pkg.tar.zst "$WORKSPACE_DIR/"
+          else
+            echo "Error: Build failed for $pkg"
+            exit 1
+          fi
           
           cd ..
         done
@@ -65,19 +64,19 @@ jobs:
 
     - name: Update Pacman Repository Database
       run: |
-        # Generate or update the repository database index 
-        # using 'custom_repo' as our database name.
-        repo-add custom_repo.db.tar.zst *.pkg.tar.zst
+        # Check if we actually have packages to index
+        if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+          repo-add custom_repo.db.tar.zst *.pkg.tar.zst
+        else
+          echo "No compiled packages found to add to the database."
+          exit 1
+        fi
 
     - name: Deploy Compiled Repo to GitHub Pages Branch
       run: |
-        # Configure git metadata using the standard GitHub actions bot profile
         git config --global user.name "github-actions[bot]"
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
         
-        # Stage the new binary packages and the database tables
         git add *.pkg.tar.zst custom_repo.*
-        
-        # Commit and push back to main (which serves your Pages directory)
         git commit -m "Automated AUR Build: $(date +'%Y-%m-%d')" || exit 0
         git push origin main
