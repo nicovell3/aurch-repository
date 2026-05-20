@@ -35,32 +35,48 @@ jobs:
       shell: bash
       env:
         WORKSPACE_DIR: ${{ github.workspace }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         mkdir -p /tmp/builds
         chown -R builder:builder /tmp/builds
         cd /tmp/builds
 
-        # Quoting 'EOF' prevents GitHub Actions from preemptively expanding Bash variables
-        sudo -u builder env WORKSPACE_DIR="$WORKSPACE_DIR" bash << 'EOF'
-        PACKAGES=("google-chrome" "anydesk-bin" "visual-studio-code-bin" "yay-bin" "python312")
+        sudo -u builder env WORKSPACE_DIR="$WORKSPACE_DIR" GITHUB_TOKEN="$GITHUB_TOKEN" bash << 'EOF'
+        PACKAGES=("google-chrome" "anydesk-bin" "visual-studio-code-bin" "yay-bin" "python312")        
+
+        EXISTING_ASSETS=$(gh release view repository --json assets --jq '.assets[].name' 2>/dev/null || true)
         
         for pkg in "${PACKAGES[@]}"; do
           echo "========================================="
-          echo "Building package: $pkg"
+          echo "Checking package: $pkg"
           echo "========================================="
           
           git clone "https://aur.archlinux.org/$pkg.git"
           cd "$pkg"
           
-          # Sync dependencies, compile, and build package
-          makepkg -s --noconfirm --needed
+          # Determine the exact filename that this version would produce
+          PKGFILES=$(makepkg --packagelist)
           
-          # Safely check if the built package file exists before copying
-          if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
-            cp *.pkg.tar.zst "$WORKSPACE_DIR/"
+          ALL_EXIST=true
+          for file in $PKGFILES; do
+            bname=$(basename "$file")
+            if ! echo "$EXISTING_ASSETS" | grep -qFx "$bname"; then
+              ALL_EXIST=false
+            fi
+          done
+          
+          if [ "$ALL_EXIST" = true ]; then
+            echo "Package $pkg is already up-to-date in the release. Skipping compilation."
           else
-            echo "Error: Build failed for $pkg"
-            exit 1
+            echo "Package $pkg is outdated or missing. Compiling now..."
+            makepkg -s --noconfirm --needed
+            
+            if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+              cp *.pkg.tar.zst "$WORKSPACE_DIR/"
+            else
+              echo "Error: Build failed for $pkg"
+              exit 1
+            fi
           fi
           
           cd ..
@@ -68,17 +84,20 @@ jobs:
         EOF
 
     - name: Update Pacman Repository Database
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # Check if we actually have packages to index
+        gh release download repository -p "custom_repo.db.tar.zst" || echo "No existing database found. Creating a fresh one."
+        
         if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
           repo-add custom_repo.db.tar.zst *.pkg.tar.zst
-          
-          # GitHub Releases does not support symlinks. 
-          # We replace the symlink with a duplicate of the real file.
+        fi
+        
+        if [ -f custom_repo.db.tar.zst ]; then
           rm -f custom_repo.db
           cp custom_repo.db.tar.zst custom_repo.db
         else
-          echo "No compiled packages found to add to the database."
+          echo "Error: Database metadata is missing."
           exit 1
         fi
 
@@ -87,9 +106,15 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         git config --global --add safe.directory '*'
+
+        gh release create repository --title "Automated AUR Repository" --notes "Updated on $(date +'%Y-%m-%d')" --target main || echo "Release target ready"
         
-        # Create the release if it does not exist
-        gh release create repository --title "Automated AUR Repository" --notes "Updated on $(date +'%Y-%m-%d')" --target main || echo "Release already exists"
+        # Only upload package binaries if new ones were actually compiled
+        if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+          gh release upload repository *.pkg.tar.zst --clobber
+        fi
         
-        # Upload packages and the database file, overwriting old versions
-        gh release upload repository *.pkg.tar.zst custom_repo.db --clobber
+        # Always upload the updated database index layout mapping
+        if [ -f custom_repo.db ]; then
+          gh release upload repository custom_repo.db --clobber
+        fi
