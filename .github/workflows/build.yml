@@ -18,7 +18,8 @@ jobs:
     steps:
     - name: Initialize Arch Linux build environment
       run: |        
-        pacman -Syu --noconfirm --needed base-devel git
+        # Install base-devel, git, and github-cli to manage releases
+        pacman -Syu --noconfirm --needed base-devel git github-cli
         useradd -m builder
         echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
         
@@ -41,7 +42,7 @@ jobs:
 
         # Quoting 'EOF' prevents GitHub Actions from preemptively expanding Bash variables
         sudo -u builder env WORKSPACE_DIR="$WORKSPACE_DIR" bash << 'EOF'
-        PACKAGES=("google-chrome" "vivaldi" "visual-studio-code-bin" "python312")
+        PACKAGES=("google-chrome" "vivaldi")
         
         for pkg in "${PACKAGES[@]}"; do
           echo "========================================="
@@ -71,18 +72,22 @@ jobs:
         # Check if we actually have packages to index
         if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
           repo-add custom_repo.db.tar.zst *.pkg.tar.zst
+          
+          # GitHub Releases does not support symlinks. 
+          # We replace the symlink with a duplicate of the real file.
+          rm -f custom_repo.db
+          cp custom_repo.db.tar.zst custom_repo.db
         else
           echo "No compiled packages found to add to the database."
           exit 1
         fi
 
-    - name: Deploy Compiled Repo to GitHub Pages Branch
+    - name: Deploy Compiled Repo to GitHub Releases
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        git config --global --add safe.directory '*'
+        # Create the release if it does not exist
+        gh release create repository --title "Automated AUR Repository" --notes "Updated on $(date +'%Y-%m-%d')" --target main || echo "Release already exists"
         
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        
-        git add *.pkg.tar.zst custom_repo.*
-        git commit -m "Automated AUR Build: $(date +'%Y-%m-%d')" || exit 0
-        git push origin main
+        # Upload packages and the database file, overwriting old versions
+        gh release upload repository *.pkg.tar.zst custom_repo.db --clobber
