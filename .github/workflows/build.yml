@@ -41,7 +41,7 @@ jobs:
         chown -R builder:builder /tmp/builds
         cd /tmp/builds
 
-        sudo -u builder env WORKSPACE_DIR="$WORKSPACE_DIR" GITHUB_TOKEN="$GITHUB_TOKEN" bash << 'EOF'
+        sudo -u builder env WORKSPACE_DIR="$WORKSPACE_DIR" GITHUB_TOKEN="$GITHUB_TOKEN" GH_REPO="$GITHUB_REPOSITORY" bash << 'EOF'
         PACKAGES=("google-chrome" "anydesk-bin" "visual-studio-code-bin" "yay-bin" "python312")
 
         EXISTING_ASSETS=$(gh release view repository --json assets --jq '.assets[].name' 2>/dev/null || true)
