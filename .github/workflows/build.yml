@@ -111,6 +111,14 @@ jobs:
 
         # Only upload package binaries if new ones were actually compiled
         if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+          # Delete stale versions of each package before uploading the new one
+          for new_pkg in *.pkg.tar.zst; do
+            pkg_name=$(echo "$new_pkg" | rev | cut -d- -f4- | rev)
+            gh release view repository --json assets --jq '.assets[].name' \
+              | grep "^${pkg_name}-" \
+              | grep -vF "$new_pkg" \
+              | xargs -r -I{} gh release delete-asset repository {} --yes
+          done
           gh release upload repository *.pkg.tar.zst --clobber
         fi
 
