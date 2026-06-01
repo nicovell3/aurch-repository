@@ -19,7 +19,7 @@ jobs:
     - name: Initialize Arch Linux build environment
       run: |        
         # Install base-devel, git, and github-cli to manage releases
-        pacman -Syu --noconfirm --needed base-devel git github-cli
+        pacman -Syu --noconfirm --needed base-devel git github-cli curl jq
         useradd -m builder
         echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
         
@@ -28,7 +28,7 @@ jobs:
       
     - name: Set Workspace Permissions
       run: |
-        git config --global --add safe.directory "${{ github.workspace }}"
+        git config --global --add safe.directory '*'
         chown -R builder:builder ./
 
     - name: Build Packages
@@ -42,43 +42,41 @@ jobs:
         cd /tmp/builds
 
         sudo -u builder env WORKSPACE_DIR="$WORKSPACE_DIR" GITHUB_TOKEN="$GITHUB_TOKEN" bash << 'EOF'
-        PACKAGES=("google-chrome" "anydesk-bin" "visual-studio-code-bin" "yay-bin" "python312")        
+        PACKAGES=("google-chrome" "anydesk-bin" "visual-studio-code-bin" "yay-bin" "python312")
 
         EXISTING_ASSETS=$(gh release view repository --json assets --jq '.assets[].name' 2>/dev/null || true)
-        
+
         for pkg in "${PACKAGES[@]}"; do
           echo "========================================="
           echo "Checking package: $pkg"
           echo "========================================="
-          
-          git clone "https://aur.archlinux.org/$pkg.git"
-          cd "$pkg"
-          
-          # Determine the exact filename that this version would produce
-          PKGFILES=$(makepkg --packagelist)
-          
-          ALL_EXIST=true
-          for file in $PKGFILES; do
-            bname=$(basename "$file")
-            if ! echo "$EXISTING_ASSETS" | grep -qFx "$bname"; then
-              ALL_EXIST=false
-            fi
-          done
-          
-          if [ "$ALL_EXIST" = true ]; then
-            echo "Package $pkg is already up-to-date in the release. Skipping compilation."
-          else
-            echo "Package $pkg is outdated or missing. Compiling now..."
-            makepkg -s --noconfirm --needed
-            
-            if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
-              cp *.pkg.tar.zst "$WORKSPACE_DIR/"
-            else
-              echo "Error: Build failed for $pkg"
-              exit 1
-            fi
+
+          # Query AUR API for the current version without cloning
+          AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/v5/info?arg[]=${pkg}" | jq -r '.results[0].Version // empty')
+
+          if [ -z "$AUR_VERSION" ]; then
+            echo "Could not fetch version for $pkg from AUR API. Skipping."
+            continue
           fi
-          
+
+          # Skip if any asset matching this package name and version already exists
+          if echo "$EXISTING_ASSETS" | grep -qF "${pkg}-${AUR_VERSION}-"; then
+            echo "Package $pkg ${AUR_VERSION} is already in the release. Skipping."
+            continue
+          fi
+
+          echo "Package $pkg ${AUR_VERSION} not found in release. Compiling..."
+          git clone "https://aur.archlinux.org/${pkg}.git"
+          cd "${pkg}"
+          makepkg -s --noconfirm --needed
+
+          if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+            cp *.pkg.tar.zst "$WORKSPACE_DIR/"
+          else
+            echo "Error: Build failed for $pkg"
+            exit 1
+          fi
+
           cd ..
         done
         EOF
@@ -105,16 +103,21 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        git config --global --add safe.directory '*'
+        if gh release view repository &>/dev/null; then
+          gh release edit repository --notes "Updated on $(date +'%Y-%m-%d')"
+        else
+          gh release create repository --title "Automated AUR Repository" --notes "Updated on $(date +'%Y-%m-%d')" --target main
+        fi
 
-        gh release create repository --title "Automated AUR Repository" --notes "Updated on $(date +'%Y-%m-%d')" --target main || echo "Release target ready"
-        
         # Only upload package binaries if new ones were actually compiled
         if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
           gh release upload repository *.pkg.tar.zst --clobber
         fi
-        
-        # Always upload the updated database index layout mapping
+
+        # Always upload the updated database files
+        if [ -f custom_repo.db.tar.zst ]; then
+          gh release upload repository custom_repo.db.tar.zst --clobber
+        fi
         if [ -f custom_repo.db ]; then
           gh release upload repository custom_repo.db --clobber
         fi
