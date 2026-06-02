@@ -42,7 +42,7 @@ jobs:
         cd /tmp/builds
 
         sudo -u builder env WORKSPACE_DIR="$WORKSPACE_DIR" GITHUB_TOKEN="$GITHUB_TOKEN" GH_REPO="$GITHUB_REPOSITORY" bash << 'EOF'
-        PACKAGES=("google-chrome" "anydesk-bin" "visual-studio-code-bin" "yay-bin" "python312")
+        PACKAGES=("google-chrome" "anydesk-bin" "visual-studio-code-bin" "yay-bin" "python312" "megasync-bin" "opera" "synology-drive" "unityhub" "flutter-bin" "unionfs-fuse" )
 
         EXISTING_ASSETS=$(gh release view repository --json assets --jq '.assets[].name' 2>/dev/null || true)
 
