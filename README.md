@@ -23,6 +23,7 @@ Current list of included packages:
 - unityhub
 - flutter-bin
 - unionfs-fuse
+- antigravity-cli
 
 If you want a different set of packages, just setup your own repository. It's free.
 
