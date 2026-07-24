@@ -24,6 +24,7 @@ Current list of included packages:
 - flutter-bin
 - unionfs-fuse
 - antigravity-cli
+- f3
 
 If you want a different set of packages, just setup your own repository. It's free.
 
